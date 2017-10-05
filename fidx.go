@@ -185,12 +185,10 @@ func merge(done <-chan struct{}, cs ...<-chan FileInfo) <-chan FileInfo {
 }
 
 func printStats(startTime time.Time, fileCount float64, completedCount float64) {
-	remainingCount := fileCount - completedCount
 	runTime := time.Since(startTime)
 	fps := completedCount / float64(runTime/time.Second)
 	percent := (completedCount / fileCount) * 100.0
-	timeEstimate := time.Duration(remainingCount/fps) * time.Second
-	fmt.Fprintf(os.Stderr, "\r  %v/%v processed  |  %.0f files/sec  |  %.0f%% complete  |  %v remaining", completedCount, fileCount, fps, percent, timeEstimate)
+	fmt.Fprintf(os.Stderr, "\r  %v/%v processed  |  %.0f files/sec  |  %v passed  |  %.1f%% complete", completedCount, fileCount, fps, runTime, percent)
 }
 
 func printStatsOnInterval(done <-chan struct{}, startTime time.Time,
