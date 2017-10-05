@@ -29,6 +29,7 @@ func main() {
 	// TODO: Allow use of output path (not actually used yet)
 	// TODO: Ensure at least one input path is provided
 	// TODO: Ensure all root paths are valid paths
+	// TODO: How is done channel supposed to be used?
 	flag.Parse()
 
 	if len(flag.Args()) == 0 {
@@ -56,6 +57,8 @@ func main() {
 
 	completedCount := 0
 	startTime := time.Now()
+	printStatsOnInterval(done, startTime, fileCount, &completedCount, 3*time.Second)
+
 	for fi := range merge(done, infoChans...) {
 		err := output.Write([]string{
 			fi.Name,
@@ -70,11 +73,9 @@ func main() {
 		}
 
 		completedCount++
-		duration := time.Since(startTime)
-		fps := float64(completedCount)/float64(duration/time.Second)
-		percent := (float64(completedCount)/float64(fileCount))*100.0
-		fmt.Fprintf(os.Stderr, "\r  %.0f%% complete  |  %v/%v files processed  |  %.0f files/sec", percent, completedCount, fileCount, fps)
 	}
+
+	printStats(startTime, float64(fileCount), float64(completedCount))
 }
 
 func proc(done <-chan struct{}, in <-chan string) <-chan FileInfo {
@@ -84,13 +85,13 @@ func proc(done <-chan struct{}, in <-chan string) <-chan FileInfo {
 		for path := range in {
 			f, err := os.Open(path)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error opening file: %v\n", path)
+				fmt.Fprintf(os.Stderr, "\nError opening file: %v\n", path)
 				continue
 			}
 
 			abs, err := filepath.Abs(path)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error calculating absolute path: %v\n", path)
+				fmt.Fprintf(os.Stderr, "\nError calculating absolute path: %v\n", path)
 				continue
 			}
 
@@ -119,7 +120,7 @@ func count(roots ...string) int {
 	count := 0
 	for _, root := range roots {
 		filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
-			if !info.IsDir() && err == nil{
+			if !info.IsDir() && err == nil {
 				count++
 			}
 			return nil
@@ -181,4 +182,29 @@ func merge(done <-chan struct{}, cs ...<-chan FileInfo) <-chan FileInfo {
 		close(out)
 	}()
 	return out
+}
+
+func printStats(startTime time.Time, fileCount float64, completedCount float64) {
+	remainingCount := fileCount - completedCount
+	runTime := time.Since(startTime)
+	fps := completedCount / float64(runTime/time.Second)
+	percent := (completedCount / fileCount) * 100.0
+	timeEstimate := time.Duration(remainingCount/fps) * time.Second
+	fmt.Fprintf(os.Stderr, "\r  %v/%v processed  |  %.0f files/sec  |  %.0f%% complete  |  %v remaining", completedCount, fileCount, fps, percent, timeEstimate)
+}
+
+func printStatsOnInterval(done <-chan struct{}, startTime time.Time,
+	fileCount int, completedCount *int, interval time.Duration) {
+	ticker := time.NewTicker(interval)
+	go func() {
+		for {
+			select {
+			case <-ticker.C:
+				printStats(startTime, float64(fileCount), float64(*completedCount))
+			case <-done:
+				ticker.Stop()
+				return
+			}
+		}
+	}()
 }
