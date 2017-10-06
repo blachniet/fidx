@@ -42,10 +42,6 @@ func main() {
 		"Name", "Directory", "Path", "Extension", "SHA256",
 	})
 
-	fmt.Fprintf(os.Stderr, "Calculating number of files...\n")
-	fileCount := count(flag.Args()...)
-	fmt.Fprintf(os.Stderr, "Found %v files to process\n", fileCount)
-
 	pathChan := scan(flag.Args()...)
 	done := make(chan struct{})
 	defer close(done)
@@ -55,9 +51,12 @@ func main() {
 		infoChans[i] = proc(done, pathChan)
 	}
 
+	var fileCount int
+	count(&fileCount, flag.Args()...)
+
 	completedCount := 0
 	startTime := time.Now()
-	printStatsOnInterval(done, startTime, fileCount, &completedCount, 3*time.Second)
+	printStatsOnInterval(done, startTime, &fileCount, &completedCount, 3*time.Second)
 
 	for fi := range merge(done, infoChans...) {
 		err := output.Write([]string{
@@ -115,21 +114,26 @@ func proc(done <-chan struct{}, in <-chan string) <-chan FileInfo {
 	return out
 }
 
-// Count the number of files in the given roots
-func count(roots ...string) int {
-	count := 0
-	for _, root := range roots {
-		filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
-			if !info.IsDir() && err == nil {
-				count++
-			}
-			return nil
-		})
-	}
-
-	return count
+// count asynchronously walks the directories specified by
+// roots and counts the number of files found. It stores
+// the number of files in the provided integer.
+func count(count *int, roots ...string) {
+	*count = 0
+	go func() {
+		for _, root := range roots {
+			filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+				if !info.IsDir() && err == nil {
+					*count++
+				}
+				return nil
+			})
+		}
+	}()
 }
 
+// scan asynchronously walks the directories specified by
+// roots and emits the paths to files found in the returned
+// channel.
 func scan(roots ...string) <-chan string {
 	out := make(chan string)
 	go func() {
@@ -152,6 +156,7 @@ func scan(roots ...string) <-chan string {
 	return out
 }
 
+// merge "fans-in" the given channels
 func merge(done <-chan struct{}, cs ...<-chan FileInfo) <-chan FileInfo {
 	var wg sync.WaitGroup
 	out := make(chan FileInfo)
@@ -188,17 +193,17 @@ func printStats(startTime time.Time, fileCount float64, completedCount float64) 
 	runTime := time.Since(startTime)
 	fps := completedCount / float64(runTime/time.Second)
 	percent := (completedCount / fileCount) * 100.0
-	fmt.Fprintf(os.Stderr, "\r  %v/%v processed  |  %.0f files/sec  |  %v passed  |  %.1f%% complete", completedCount, fileCount, fps, runTime, percent)
+	fmt.Fprintf(os.Stderr, "\r  %v/%v processed  |  %.0f files/sec  |  %v passed  |  %.1f%% complete          ", completedCount, fileCount, fps, runTime, percent)
 }
 
 func printStatsOnInterval(done <-chan struct{}, startTime time.Time,
-	fileCount int, completedCount *int, interval time.Duration) {
+	fileCount *int, completedCount *int, interval time.Duration) {
 	ticker := time.NewTicker(interval)
 	go func() {
 		for {
 			select {
 			case <-ticker.C:
-				printStats(startTime, float64(fileCount), float64(*completedCount))
+				printStats(startTime, float64(*fileCount), float64(*completedCount))
 			case <-done:
 				ticker.Stop()
 				return
