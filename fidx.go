@@ -45,12 +45,9 @@ func main() {
 	})
 
 	toProcessChan := scan(flag.Args()...)
-	done := make(chan struct{})
-	defer close(done)
-
 	processedChan := make([]<-chan FileRecord, jobCount)
 	for i := 0; i < jobCount; i++ {
-		processedChan[i] = proc(done, toProcessChan)
+		processedChan[i] = proc(toProcessChan)
 	}
 
 	var fileCount int64
@@ -58,9 +55,9 @@ func main() {
 
 	var completedCount int64
 	startTime := time.Now()
-	printStatsOnInterval(done, startTime, &fileCount, &completedCount, 3*time.Second)
+	printStatsOnInterval(startTime, &fileCount, &completedCount, 3*time.Second)
 
-	for fi := range merge(done, processedChan...) {
+	for fi := range merge(processedChan...) {
 		err := output.Write([]string{
 			// fi.Name,
 			// fi.Directory,
@@ -80,7 +77,7 @@ func main() {
 	printStats(startTime, float64(fileCount), float64(completedCount))
 }
 
-func proc(done <-chan struct{}, in <-chan FileRecord) <-chan FileRecord {
+func proc(in <-chan FileRecord) <-chan FileRecord {
 	out := make(chan FileRecord)
 	go func() {
 		defer close(out)
@@ -94,12 +91,7 @@ func proc(done <-chan struct{}, in <-chan FileRecord) <-chan FileRecord {
 			hashSHA := sha256.New()
 			io.Copy(hashSHA, f)
 			rec.SHA256 = hashSHA.Sum(nil)
-
-			select {
-			case out <- rec:
-			case <-done:
-				return
-			}
+			out <- rec
 		}
 	}()
 	return out
@@ -157,7 +149,7 @@ func scan(roots ...string) <-chan FileRecord {
 }
 
 // merge "fans-in" the given channels
-func merge(done <-chan struct{}, cs ...<-chan FileRecord) <-chan FileRecord {
+func merge(cs ...<-chan FileRecord) <-chan FileRecord {
 	var wg sync.WaitGroup
 	out := make(chan FileRecord)
 
@@ -166,11 +158,7 @@ func merge(done <-chan struct{}, cs ...<-chan FileRecord) <-chan FileRecord {
 	output := func(c <-chan FileRecord) {
 		defer wg.Done()
 		for n := range c {
-			select {
-			case out <- n:
-			case <-done:
-				return
-			}
+			out <- n
 		}
 	}
 
@@ -196,18 +184,13 @@ func printStats(startTime time.Time, fileCount float64, completedCount float64) 
 	fmt.Fprintf(os.Stderr, "\r  %v  | %v of %v processed  |  %.0f files/sec  |   %.1f%% complete          ", runTime, completedCount, fileCount, fps, percent)
 }
 
-func printStatsOnInterval(done <-chan struct{}, startTime time.Time,
+func printStatsOnInterval(startTime time.Time,
 	fileCount *int64, completedCount *int64, interval time.Duration) {
 	ticker := time.NewTicker(interval)
 	go func() {
 		for {
-			select {
-			case <-ticker.C:
-				printStats(startTime, float64(*fileCount), float64(*completedCount))
-			case <-done:
-				ticker.Stop()
-				return
-			}
+			<-ticker.C
+			printStats(startTime, float64(*fileCount), float64(*completedCount))
 		}
 	}()
 }
