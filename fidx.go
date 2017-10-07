@@ -26,12 +26,6 @@ type FileRecord struct {
 func main() {
 	var jobCount int
 	flag.IntVar(&jobCount, "jobs", runtime.NumCPU(), "Number of jobs to run to calculate file information. Defaults to the number of CPUs on the system. You may want to set this to 1 for non-SSD drives.")
-	// var outputPath string
-	// flag.StringVar(&outputPath, "output", "", "File to write data to.")
-	// TODO: Allow use of output path (not actually used yet)
-	// TODO: Ensure at least one input path is provided
-	// TODO: Ensure all root paths are valid paths
-	// TODO: How is done channel supposed to be used?
 	flag.Parse()
 
 	if len(flag.Args()) == 0 {
