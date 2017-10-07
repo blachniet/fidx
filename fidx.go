@@ -13,11 +13,12 @@ import (
 	"time"
 )
 
-type FileInfo struct {
+type FileRecord struct {
 	Name      string
 	Directory string
 	Path      string
 	Extension string
+	Size      int64
 	SHA256    []byte
 }
 
@@ -39,16 +40,16 @@ func main() {
 
 	output := csv.NewWriter(os.Stdout)
 	output.Write([]string{
-		"Name", "Directory", "Path", "Extension", "SHA256",
+		"Name", "Directory", "Path", "Extension", "Size", "SHA256",
 	})
 
-	pathChan := scan(flag.Args()...)
+	toProcessChan := scan(flag.Args()...)
 	done := make(chan struct{})
 	defer close(done)
 
-	infoChans := make([]<-chan FileInfo, jobCount)
+	processedChan := make([]<-chan FileRecord, jobCount)
 	for i := 0; i < jobCount; i++ {
-		infoChans[i] = proc(done, pathChan)
+		processedChan[i] = proc(done, toProcessChan)
 	}
 
 	var fileCount int
@@ -58,12 +59,13 @@ func main() {
 	startTime := time.Now()
 	printStatsOnInterval(done, startTime, &fileCount, &completedCount, 3*time.Second)
 
-	for fi := range merge(done, infoChans...) {
+	for fi := range merge(done, processedChan...) {
 		err := output.Write([]string{
 			fi.Name,
 			fi.Directory,
 			fi.Path,
 			fi.Extension,
+			fmt.Sprintf("%d", fi.Size),
 			fmt.Sprintf("%x", fi.SHA256),
 		})
 
@@ -77,35 +79,23 @@ func main() {
 	printStats(startTime, float64(fileCount), float64(completedCount))
 }
 
-func proc(done <-chan struct{}, in <-chan string) <-chan FileInfo {
-	out := make(chan FileInfo)
+func proc(done <-chan struct{}, in <-chan FileRecord) <-chan FileRecord {
+	out := make(chan FileRecord)
 	go func() {
 		defer close(out)
-		for path := range in {
-			f, err := os.Open(path)
+		for rec := range in {
+			f, err := os.Open(rec.Path)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "\nError opening file: %v\n", path)
-				continue
-			}
-
-			abs, err := filepath.Abs(path)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "\nError calculating absolute path: %v\n", path)
+				fmt.Fprintf(os.Stderr, "\nError opening file: %v\n", rec.Path)
 				continue
 			}
 
 			hashSHA := sha256.New()
 			io.Copy(hashSHA, f)
-			fi := FileInfo{
-				Name:      filepath.Base(path),
-				Directory: filepath.Dir(path),
-				Path:      abs,
-				Extension: filepath.Ext(path),
-				SHA256:    hashSHA.Sum(nil),
-			}
+			rec.SHA256 = hashSHA.Sum(nil)
 
 			select {
-			case out <- fi:
+			case out <- rec:
 			case <-done:
 				return
 			}
@@ -134,8 +124,8 @@ func count(count *int, roots ...string) {
 // scan asynchronously walks the directories specified by
 // roots and emits the paths to files found in the returned
 // channel.
-func scan(roots ...string) <-chan string {
-	out := make(chan string)
+func scan(roots ...string) <-chan FileRecord {
+	out := make(chan FileRecord)
 	go func() {
 		defer close(out)
 
@@ -143,12 +133,22 @@ func scan(roots ...string) <-chan string {
 			filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
 				if err != nil {
 					fmt.Fprintf(os.Stderr, "Error walking: %+v\n", err)
-				}
-				if info.IsDir() {
-					return nil
+				} else if !info.IsDir() {
+					absPath, err := filepath.Abs(path)
+					if err != nil {
+						fmt.Fprintf(os.Stderr, "\nError calculating absolute path: %v\n", path)
+						return nil
+					}
+
+					out <- FileRecord{
+						Name:      info.Name(),
+						Directory: filepath.Dir(absPath),
+						Path:      absPath,
+						Extension: filepath.Ext(path),
+						Size:      info.Size(),
+					}
 				}
 
-				out <- path
 				return nil
 			})
 		}
@@ -157,13 +157,13 @@ func scan(roots ...string) <-chan string {
 }
 
 // merge "fans-in" the given channels
-func merge(done <-chan struct{}, cs ...<-chan FileInfo) <-chan FileInfo {
+func merge(done <-chan struct{}, cs ...<-chan FileRecord) <-chan FileRecord {
 	var wg sync.WaitGroup
-	out := make(chan FileInfo)
+	out := make(chan FileRecord)
 
 	// Start an output goroutine for each input channel in cs.  output
 	// copies values from c to out until c is closed, then calls wg.Done.
-	output := func(c <-chan FileInfo) {
+	output := func(c <-chan FileRecord) {
 		defer wg.Done()
 		for n := range c {
 			select {
