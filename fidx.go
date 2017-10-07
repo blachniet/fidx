@@ -34,6 +34,7 @@ func main() {
 	}
 
 	output := csv.NewWriter(os.Stdout)
+	defer output.Flush()
 	output.Write([]string{
 		// "Name",
 		// "Directory",
