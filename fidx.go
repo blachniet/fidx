@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -52,10 +53,10 @@ func main() {
 		processedChan[i] = proc(done, toProcessChan)
 	}
 
-	var fileCount int
+	var fileCount int64
 	count(&fileCount, flag.Args()...)
 
-	completedCount := 0
+	var completedCount int64
 	startTime := time.Now()
 	printStatsOnInterval(done, startTime, &fileCount, &completedCount, 3*time.Second)
 
@@ -70,7 +71,7 @@ func main() {
 		})
 
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error writing CSV record\n")
+			fmt.Fprintf(os.Stderr, "\rError writing CSV record\n")
 		}
 
 		completedCount++
@@ -86,7 +87,7 @@ func proc(done <-chan struct{}, in <-chan FileRecord) <-chan FileRecord {
 		for rec := range in {
 			f, err := os.Open(rec.Path)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "\nError opening file: %v\n", rec.Path)
+				fmt.Fprintf(os.Stderr, "\rError opening file: %v\n", rec.Path)
 				continue
 			}
 
@@ -107,13 +108,12 @@ func proc(done <-chan struct{}, in <-chan FileRecord) <-chan FileRecord {
 // count asynchronously walks the directories specified by
 // roots and counts the number of files found. It stores
 // the number of files in the provided integer.
-func count(count *int, roots ...string) {
-	*count = 0
+func count(count *int64, roots ...string) {
 	go func() {
 		for _, root := range roots {
 			filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
-				if !info.IsDir() && err == nil {
-					*count++
+				if err == nil && !info.IsDir() {
+					atomic.AddInt64(count, 1)
 				}
 				return nil
 			})
@@ -132,11 +132,11 @@ func scan(roots ...string) <-chan FileRecord {
 		for _, root := range roots {
 			filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
 				if err != nil {
-					fmt.Fprintf(os.Stderr, "Error walking: %+v\n", err)
+					fmt.Fprintf(os.Stderr, "\rError walking: %+v\n", err)
 				} else if !info.IsDir() {
 					absPath, err := filepath.Abs(path)
 					if err != nil {
-						fmt.Fprintf(os.Stderr, "\nError calculating absolute path: %v\n", path)
+						fmt.Fprintf(os.Stderr, "\rError calculating absolute path: %v\n", path)
 						return nil
 					}
 
@@ -193,11 +193,11 @@ func printStats(startTime time.Time, fileCount float64, completedCount float64) 
 	runTime := time.Since(startTime)
 	fps := completedCount / float64(runTime/time.Second)
 	percent := (completedCount / fileCount) * 100.0
-	fmt.Fprintf(os.Stderr, "\r  %v/%v processed  |  %.0f files/sec  |  %v passed  |  %.1f%% complete          ", completedCount, fileCount, fps, runTime, percent)
+	fmt.Fprintf(os.Stderr, "\r  %v  | %v of %v processed  |  %.0f files/sec  |   %.1f%% complete          ", runTime, completedCount, fileCount, fps, percent)
 }
 
 func printStatsOnInterval(done <-chan struct{}, startTime time.Time,
-	fileCount *int, completedCount *int, interval time.Duration) {
+	fileCount *int64, completedCount *int64, interval time.Duration) {
 	ticker := time.NewTicker(interval)
 	go func() {
 		for {
