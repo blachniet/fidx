@@ -35,7 +35,12 @@ func main() {
 
 	output := csv.NewWriter(os.Stdout)
 	output.Write([]string{
-		"Name", "Directory", "Path", "Extension", "Size", "SHA256",
+		// "Name",
+		// "Directory",
+		"Path",
+		// "Extension",
+		"Size",
+		"SHA256",
 	})
 
 	toProcessChan := scan(flag.Args()...)
@@ -56,10 +61,10 @@ func main() {
 
 	for fi := range merge(done, processedChan...) {
 		err := output.Write([]string{
-			fi.Name,
-			fi.Directory,
+			// fi.Name,
+			// fi.Directory,
 			fi.Path,
-			fi.Extension,
+			// fi.Extension,
 			fmt.Sprintf("%d", fi.Size),
 			fmt.Sprintf("%x", fi.SHA256),
 		})
